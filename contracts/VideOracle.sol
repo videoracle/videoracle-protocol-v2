@@ -117,11 +117,17 @@ contract VideOracle is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice create a request
+     * @notice create a request.
+     * In order to accommodate a potential dispute 110% of the reward is required.
+     * The extra will be returned in case of no dispute or winning the dispute.
      * @param requestData - data necessary to fulfill the request
      */
     function createRequest(Request memory requestData) external payable {
-        require(requestData.reward == msg.value, "Wrong value sent");
+        // send in 110% of reard in case a dipsute is opened and lost
+        require(
+            (requestData.reward * 11) / 10 == msg.value,
+            "Wrong value sent"
+        );
         uint256 requestId = _requestIdCounter.current();
         requestData.status = Status.OPEN;
         requestData.requester = _msgSender();
@@ -208,6 +214,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             "Not pending validation"
         );
         req.status = Status.FULFILLED;
+        Address.sendValue(payable(_msgSender()), req.reward / 10); // send 10% of reward back to requester
         emit VerificationAccepted(requestId_);
     }
 
@@ -328,29 +335,39 @@ contract VideOracle is Ownable, ReentrancyGuard {
             Dispute memory dispute = disputes[id];
             require(!dispute.open, "Dispute still ongoing");
             uint256 rewardToDisputeVoters = req.reward / 10; // 10% to dispute voters
-            if (dispute.nay > dispute.aye) {
-                uint256 rewardToOriginals = req.reward - rewardToDisputeVoters;
-                address verifier = proofsByRequest[id][req.electedProof]
-                    .verifier;
-                Address.sendValue(payable(verifier), rewardToOriginals / 2);
-                // return staked amount (+ reward portion if applicable) to all voters
-                distributeFundsToVoters(
-                    id,
-                    req,
-                    rewardToOriginals / (2 * req.minVotes)
-                );
-            } else {
-                // return reward to requester
+            if (dispute.nay == dispute.aye) {
+                distributeFundsToVoters(id, req, 0);
                 Address.sendValue(payable(req.requester), req.reward);
-            }
-            // ditribute rewards to dispute voters
-            address[] memory disputeVotersMem = disputeVoters[id];
-            uint256 numDisputeVoters = disputeVotersMem.length;
-            for (uint256 j; j < numDisputeVoters; ++j) {
-                Address.sendValue(
-                    payable(disputeVotersMem[j]),
-                    rewardToDisputeVoters / numDisputeVoters
-                );
+            } else {
+                if (dispute.nay > dispute.aye) {
+                    // if voters win the reward is correctly distributed and staked funds are returned
+                    // funds to reward dispute voters will come from the extra amount the requester initially deposited
+                    address verifier = proofsByRequest[id][req.electedProof]
+                        .verifier;
+                    Address.sendValue(payable(verifier), req.reward / 2);
+                    // return staked amount (+ reward portion if applicable) to all voters
+                    distributeFundsToVoters(
+                        id,
+                        req,
+                        req.reward / (2 * req.minVotes)
+                    );
+                } else {
+                    // if the requester wins the reward and the extra is returned to the requester
+                    // funds to reward dispute voters will come from the amount request voters have staked
+                    Address.sendValue(
+                        payable(req.requester),
+                        (req.reward * 11) / 10
+                    );
+                }
+                // ditribute rewards to dispute voters
+                address[] memory disputeVotersMem = disputeVoters[id];
+                uint256 numDisputeVoters = disputeVotersMem.length;
+                for (uint256 j; j < numDisputeVoters; ++j) {
+                    Address.sendValue(
+                        payable(disputeVotersMem[j]),
+                        rewardToDisputeVoters / numDisputeVoters
+                    );
+                }
             }
             req.status = Status.CLOSED;
             requests[id] = req;
