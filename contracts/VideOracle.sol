@@ -31,7 +31,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
     struct Request {
         address requester;
         string body;
-        string coordinates;
+        string coordinates; // lat:<Number>,lon:<Number>
         uint256 reward;
         uint256 deadline;
         uint256 minVotes;
@@ -151,7 +151,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             "Cannot submit multiple proofs"
         );
         Proof[] storage requestProofs = proofsByRequest[requestId_];
-        proofVerifier[tokenId_] = _msgSender();
+        proofVerifier[tokenId_] = verifier;
         uint256 proofIndex = requestProofs.length;
         requestProofs.push(Proof({verifier: verifier, tokenId: tokenId_}));
         emit NewProof(verifier, requestId_, proofIndex);
@@ -200,7 +200,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @notice Accept he verification from the protocol
      * @param requestId_ - the id of the request
      */
-    function acceptVerification(uint256 requestId_) external nonReentrant {
+    function acceptVerification(uint256 requestId_) external {
         Request storage req = requests[requestId_];
         require(_msgSender() == req.requester, "Not requester");
         require(
@@ -225,7 +225,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         disputes[requestId_] = Dispute({
             reason: reason_,
             open: true,
-            deadline: block.timestamp + 14 days,
+            deadline: block.timestamp + 7 days,
             aye: 0,
             nay: 0
         });
