@@ -2,61 +2,56 @@
 pragma solidity ^0.8.9;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+import {IVideOracleConsumer} from "./interfaces/IVideOracleConsumer.sol";
+import {DataTypes} from "./DataTypes.sol";
+
+/**
+ * VideOracle
+ * A protocol for video verification of IRL events
+ * The system acts like an optimistic oracle:
+ * Requests are to be fulfilled within the specified deadline but a dipute window of 7 days after such date is given.
+ * If a dispute is created, the time frame for its resolution is of 7 days.
+ * This puts the maximum timeframe before receiving a final answer of 14 days + the request's time to answer (creation until deadline).
+ *
+ * In order to make a Request, the requester must have enough VOT to burn according to the requestCharge.
+ * in order to submit a Proof, the verifier must mint a videoNFT.
+ * In order to vote for a Proof, the voter must stake an amount equal to 10% of the reward divided by the minNumberOfVotes of the request.
+ * In order to create a Dispute, the disputer must stake an amount equal to 10% of the reward.
+ * Dispute voters are rewarded only if they actually resolve the dispute by receiving either the voters or disputer staked amounts.
+ * The disputer receives 20% of the request reward as compensation for preventing the requester from receiving a worng answer. The requester is refunded the remaining 80%.
+ *
+ */
 contract VideOracle is Ownable, ReentrancyGuard {
     using Address for address;
     using Counters for Counters.Counter;
+    using SafeERC20 for IERC20;
 
     event NewRequest(address indexed src, uint256 requestId);
     event NewProof(address indexed src, uint256 requestId, uint256 proofId);
     event NewProofVote(address indexed src, uint256 requestId, uint256 proofId);
-    event RequestPendingValidation(uint256 requestId);
+    event RequestAnswered(uint256 requestId);
     event RequestAborted(uint256 requestId);
     event VerificationAccepted(uint256 requestId);
     event VerificationRejected(uint256 requestId, string reason);
     event NewDisputeVote(address indexed src, uint256 requestId, bool aye);
 
-    enum Status {
-        OPEN,
-        PENDING_VALIDATION,
-        ABORTED,
-        FULFILLED,
-        DISPUTED,
-        CLOSED
-    }
-
-    struct Request {
-        address requester;
-        string body;
-        string coordinates; // lat:<Number>,lon:<Number>
-        uint256 reward;
-        uint256 deadline;
-        uint256 minVotes;
-        Status status;
-        uint256 electedProof;
-    }
-
-    struct Proof {
-        address verifier;
-        uint256 tokenId;
-    }
-
-    struct Dispute {
-        string reason;
-        bool open;
-        uint256 deadline;
-        uint256 aye; // agree with the rejection
-        uint256 nay; // disagree with the rejection
-    }
+    IERC20 public immutable VOT;
+    uint256 public requestCharge;
 
     Counters.Counter internal _requestIdCounter;
     // Requests
-    mapping(uint256 => Request) public requests;
+    mapping(uint256 => DataTypes.Request) public requests;
+    // only for AnswerType.STRING {0: "Alice", 1: "Bob", 2: "Carol", ...}
+    mapping(uint256 => mapping(uint256 => string))
+        public acceptedAnswersByRequest;
     // Proofs
-    mapping(uint256 => Proof[]) public proofsByRequest;
+    mapping(uint256 => DataTypes.Proof[]) public proofsByRequest;
     mapping(uint256 => address) public proofVerifier;
     mapping(address => mapping(uint256 => bool)) public hasGivenProofToRequest;
     // Votes
@@ -67,17 +62,23 @@ contract VideOracle is Ownable, ReentrancyGuard {
     mapping(uint256 => mapping(address => bool)) public hasCastedVoteForRequest;
     mapping(uint256 => address[]) public votersByRequest;
     // Disputes
-    mapping(uint256 => Dispute) public disputes;
+    mapping(uint256 => DataTypes.Dispute) public disputes;
     mapping(uint256 => mapping(address => bool)) public hasVotedOnDispute;
     mapping(uint256 => address[]) public disputeVoters;
 
     modifier onlyOpenRequest(uint256 requestId_) {
-        Request storage req = requests[requestId_];
+        DataTypes.Request storage req = requests[requestId_];
         require(
-            block.timestamp <= req.deadline && req.status == Status.OPEN,
+            block.timestamp <= req.deadline &&
+                req.status == DataTypes.Status.OPEN,
             "Request not OPEN"
         );
         _;
+    }
+
+    constructor(address vot, uint256 charge) {
+        VOT = IERC20(vot);
+        requestCharge = charge;
     }
 
     /**
@@ -89,20 +90,6 @@ contract VideOracle is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Get data for request `requestId_`
-     * @param requestId_ - the id of the request
-     * @return Request - the data for the request
-     */
-    function getRequest(uint256 requestId_)
-        external
-        view
-        returns (Request memory)
-    {
-        Request memory req = requests[requestId_];
-        return req;
-    }
-
-    /**
      * @notice Get proofs for request `requestId_`
      * @param requestId_ - the id of the request
      * @return Proof[] - a list of proofs
@@ -110,10 +97,9 @@ contract VideOracle is Ownable, ReentrancyGuard {
     function getProofsByRequest(uint256 requestId_)
         external
         view
-        returns (Proof[] memory)
+        returns (DataTypes.Proof[] memory)
     {
-        Proof[] memory proofs = proofsByRequest[requestId_];
-        return proofs;
+        return proofsByRequest[requestId_];
     }
 
     /**
@@ -121,18 +107,40 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * In order to accommodate a potential dispute 110% of the reward is required.
      * The extra will be returned in case of no dispute or winning the dispute.
      * @param requestData - data necessary to fulfill the request
+     * @param answers - list of possible answers, only used when answerType == STRING.
      */
-    function createRequest(Request memory requestData) external payable {
-        // send in 110% of reard in case a dipsute is opened and lost
-        require(
-            (requestData.reward * 11) / 10 == msg.value,
-            "Wrong value sent"
+    function createRequest(
+        DataTypes.CreateRequestData memory requestData,
+        string[] calldata answers
+    ) external payable {
+        // burn VOT
+        VOT.safeTransferFrom(_msgSender(), address(0), requestCharge);
+        _transferIn(
+            requestData.rewardAsset,
+            _msgSender(),
+            requestData.rewardAmount
         );
+        require(requestData.consumer.isConsumer(), "Not a consumer");
         uint256 requestId = _requestIdCounter.current();
-        requestData.status = Status.OPEN;
-        requestData.requester = _msgSender();
-        requestData.electedProof = type(uint256).max;
-        requests[requestId] = requestData;
+        requests[requestId] = DataTypes.Request({
+            requester: _msgSender(),
+            status: DataTypes.Status.OPEN,
+            electedProof: type(uint256).max,
+            answerType: requestData.answerType,
+            body: requestData.body,
+            coordinates: requestData.coordinates,
+            rewardAsset: requestData.rewardAsset,
+            rewardAmount: requestData.rewardAmount,
+            deadline: requestData.deadline,
+            minVotes: requestData.minVotes,
+            // minSubmittedProofs: requestData.minSubmittedProofs, // TODO - good idea?
+            consumer: requestData.consumer
+        });
+        if (requestData.answerType == DataTypes.AnswerType.STRING) {
+            for (uint256 i; i < answers.length; ++i) {
+                acceptedAnswersByRequest[requestId][i] = answers[i];
+            }
+        }
         _requestIdCounter.increment();
         emit NewRequest(_msgSender(), requestId);
     }
@@ -142,11 +150,13 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @dev a VideoNFT must have been minted through LivePeer's VideoNFT contract
      * @param requestId_ - the id of the request
      * @param tokenId_ - the tokenId from the VideoNFT contract
+     * @param answer_ - uint256 representing the answer to the request
      */
-    function submitProof(uint256 requestId_, uint256 tokenId_)
-        external
-        onlyOpenRequest(requestId_)
-    {
+    function submitProof(
+        uint256 requestId_,
+        uint256 tokenId_,
+        uint256 answer_
+    ) external onlyOpenRequest(requestId_) {
         address verifier = _msgSender();
         require(
             proofVerifier[tokenId_] == address(0),
@@ -156,15 +166,34 @@ contract VideOracle is Ownable, ReentrancyGuard {
             !hasGivenProofToRequest[verifier][requestId_],
             "Cannot submit multiple proofs"
         );
-        Proof[] storage requestProofs = proofsByRequest[requestId_];
+        DataTypes.AnswerType answerType = requests[requestId_].answerType;
+        if (answerType == DataTypes.AnswerType.BINARY) {
+            require(answer_ == 0 || answer_ == 1, "Answer not valid");
+        } else if (answerType == DataTypes.AnswerType.UINT) {
+            string memory emptyString;
+            require(
+                keccak256(
+                    abi.encode(acceptedAnswersByRequest[requestId_][answer_])
+                ) != keccak256(abi.encode(emptyString)),
+                "Answer not valid"
+            );
+        }
+        DataTypes.Proof[] storage requestProofs = proofsByRequest[requestId_];
         proofVerifier[tokenId_] = verifier;
         uint256 proofIndex = requestProofs.length;
-        requestProofs.push(Proof({verifier: verifier, tokenId: tokenId_}));
+        requestProofs.push(
+            DataTypes.Proof({
+                verifier: verifier,
+                tokenId: tokenId_,
+                answer: answer_
+            })
+        );
         emit NewProof(verifier, requestId_, proofIndex);
     }
 
     /**
      * @notice Upvote proof `proofId_` of request `requestId_`
+     * @dev requires prevous approval for spending of rewardAsset
      * @param requestId_ - the id of the request
      * @param proofId_ - the id of the proof
      */
@@ -173,11 +202,8 @@ contract VideOracle is Ownable, ReentrancyGuard {
         payable
         onlyOpenRequest(requestId_)
     {
-        Request memory req = requests[requestId_];
-        require(
-            msg.value == stakeAmountForRequest(req),
-            "Insufficient funds staked"
-        );
+        DataTypes.Request memory req = requests[requestId_];
+        _transferIn(req.rewardAsset, _msgSender(), stakeAmountForRequest(req));
         require(
             !hasCastedVoteForRequest[requestId_][_msgSender()],
             "Vote already cast"
@@ -195,65 +221,53 @@ contract VideOracle is Ownable, ReentrancyGuard {
         if (
             votersByProofByRequest[requestId_][proofId_].length == req.minVotes
         ) {
-            req.status = Status.PENDING_VALIDATION;
+            req.status = DataTypes.Status.FULFILLED;
             req.electedProof = proofId_;
             requests[requestId_] = req;
-            emit RequestPendingValidation(requestId_);
+            emit RequestAnswered(requestId_);
         }
-    }
-
-    /**
-     * @notice Accept he verification from the protocol
-     * @param requestId_ - the id of the request
-     */
-    function acceptVerification(uint256 requestId_) external {
-        Request storage req = requests[requestId_];
-        require(_msgSender() == req.requester, "Not requester");
-        require(
-            req.status == Status.PENDING_VALIDATION,
-            "Not pending validation"
-        );
-        req.status = Status.FULFILLED;
-        Address.sendValue(payable(_msgSender()), req.reward / 10); // send 10% of reward back to requester
-        emit VerificationAccepted(requestId_);
+        req.consumer.onRequestPendingValidation(requestId_, req);
     }
 
     /**
      * @notice Reject the verification from the protocol and raise a dispute for request `requestId_`
      * @param requestId_ - the id of the request
-     * @param reason_ - an explanation as to why the verification is reected
+     * @param reason_ - an explanation as to why the verification is rejected
      */
-    function rejectVerification(uint256 requestId_, string calldata reason_)
+    function createDispute(uint256 requestId_, string calldata reason_)
         public
+        payable
     {
-        Request storage req = requests[requestId_];
-        require(_msgSender() == req.requester, "Not requester");
-        req.status = Status.DISPUTED;
-        disputes[requestId_] = Dispute({
+        DataTypes.Request storage req = requests[requestId_];
+        require(req.status == DataTypes.Status.FULFILLED, "Not Allowed");
+        require(block.timestamp <= req.deadline + 7 days, "Not Allowed");
+        // stake
+        _transferIn(req.rewardAsset, _msgSender(), req.rewardAmount / 10);
+        req.status = DataTypes.Status.DISPUTED;
+        DataTypes.Dispute memory dispute = DataTypes.Dispute({
+            creator: _msgSender(),
             reason: reason_,
             open: true,
             deadline: block.timestamp + 7 days,
             aye: 0,
             nay: 0
         });
+        disputes[requestId_] = dispute;
         emit VerificationRejected(requestId_, reason_);
+        req.consumer.onDisputeOpened(requestId_, req, dispute);
     }
 
     /**
      * @notice Abort the request `requestId_` and return any funds to their respective owners.
-     * The request deadline must have passed
+     * No proofs must have been submitted yet
      * @param requestId_ - the id of the request
      */
     function abortRequest(uint256 requestId_) external nonReentrant {
-        Request storage req = requests[requestId_];
+        DataTypes.Request storage req = requests[requestId_];
         require(_msgSender() == req.requester, "Not requester");
-        require(
-            block.timestamp >= req.deadline && req.status == Status.OPEN,
-            "Cannot abort now"
-        );
-        req.status = Status.ABORTED;
-        Address.sendValue(payable(_msgSender()), req.reward);
-        distributeFundsToVoters(requestId_, req, 0);
+        require(proofsByRequest[requestId_].length == 0, "Cannot abort now");
+        req.status = DataTypes.Status.ABORTED;
+        _transferOut(req.rewardAsset, _msgSender(), req.rewardAmount);
         emit RequestAborted(requestId_);
     }
 
@@ -270,12 +284,19 @@ contract VideOracle is Ownable, ReentrancyGuard {
         uint256 loops = requestIds.length;
         for (uint256 i; i < loops; ++i) {
             uint256 id = requestIds[i];
-            Request memory req = requests[id];
-            require(req.status == Status.FULFILLED, "Request not fulfilled");
+            DataTypes.Request memory req = requests[id];
+            require(
+                req.deadline >= block.timestamp + 7 days,
+                "Dipsute window still ongoing"
+            );
             address verifier = proofsByRequest[id][req.electedProof].verifier;
-            Address.sendValue(payable(verifier), req.reward / 2);
-            distributeFundsToVoters(id, req, req.reward / (2 * req.minVotes));
-            req.status = Status.CLOSED;
+            _transferOut(req.rewardAsset, verifier, req.rewardAmount / 2);
+            distributeFundsToVoters(
+                id,
+                req,
+                req.rewardAmount / (2 * req.minVotes)
+            );
+            req.status = DataTypes.Status.CLOSED;
             requests[id] = req;
         }
     }
@@ -286,7 +307,15 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @param aye_ - wether you consider the dispute legit or not
      */
     function voteOnDispute(uint256 requestId_, bool aye_) public {
-        Dispute memory dispute = disputes[requestId_];
+        DataTypes.Dispute memory dispute = disputes[requestId_];
+        if (block.timestamp >= dispute.deadline) {
+            // vote is ignored
+            dispute.open = false;
+            disputes[requestId_] = dispute;
+            DataTypes.Request memory req = requests[requestId_];
+            req.consumer.onDisputeCLosed(requestId_, req, dispute);
+            return;
+        }
         require(dispute.open, "Dispute closed");
         require(
             !hasVotedOnDispute[requestId_][_msgSender()],
@@ -310,18 +339,17 @@ contract VideOracle is Ownable, ReentrancyGuard {
         hasVotedOnDispute[requestId_][_msgSender()] = true;
         disputeVoters[requestId_].push(_msgSender());
         emit NewDisputeVote(_msgSender(), requestId_, aye_);
-
-        if (block.timestamp >= dispute.deadline) {
-            dispute.open = false;
-        }
         disputes[requestId_] = dispute;
     }
 
     /**
      * @notice distribute rewards from disputes to whoever the receipients are
      * @dev this function can become "expensive" due to the multitude of loops
-     * but considering the contract is on a cheap netwokr like Polygon it should not be much of an issue
+     * but considering the contract is on a cheap network like Polygon it should not be much of an issue
      * @param requestIds - a list of requests for which to distribute funds
+     *
+     * Logic
+     * if the dispute ends without a clear winner: everyone gets their funds back (requester the reward, request voters & disputer their stake)
      */
     function distributeDisputeRewards(uint256[] calldata requestIds)
         public
@@ -330,46 +358,75 @@ contract VideOracle is Ownable, ReentrancyGuard {
         uint256 loops = requestIds.length;
         for (uint256 i; i < loops; ++i) {
             uint256 id = requestIds[i];
-            Request memory req = requests[id];
-            require(req.status == Status.DISPUTED, "Request not disputed");
-            Dispute memory dispute = disputes[id];
-            require(!dispute.open, "Dispute still ongoing");
-            uint256 rewardToDisputeVoters = req.reward / 10; // 10% to dispute voters
+            DataTypes.Request memory req = requests[id];
+            require(
+                req.status == DataTypes.Status.DISPUTED,
+                "Request not disputed"
+            );
+            DataTypes.Dispute memory dispute = disputes[id];
+            if (block.timestamp >= dispute.deadline) {
+                voteOnDispute(id, false); // close the dispute, the vote is discarded anyways
+            }
             if (dispute.nay == dispute.aye) {
+                // return funds to request voters
                 distributeFundsToVoters(id, req, 0);
-                Address.sendValue(payable(req.requester), req.reward);
+                // return funds to disputer
+                _transferOut(
+                    req.rewardAsset,
+                    dispute.creator,
+                    req.rewardAmount
+                );
+                // return funds to requester
+                _transferOut(req.rewardAsset, req.requester, req.rewardAmount);
+                req.status = DataTypes.Status.NULL;
+                requests[id] = req;
+                return;
+                // dispute voters do not get anything as they were essentially useless
             } else {
+                uint256 rewardToDisputeVoters = req.rewardAmount / 10; // 10% to dispute voters
                 if (dispute.nay > dispute.aye) {
-                    // if voters win the reward is correctly distributed and staked funds are returned
-                    // funds to reward dispute voters will come from the extra amount the requester initially deposited
+                    // If voters win, the reward is correctly distributed and staked funds are returned
+                    // Funds to reward dispute voters will come from the stake of the disputer
                     address verifier = proofsByRequest[id][req.electedProof]
                         .verifier;
-                    Address.sendValue(payable(verifier), req.reward / 2);
+                    _transferOut(
+                        req.rewardAsset,
+                        verifier,
+                        req.rewardAmount / 2
+                    );
                     // return staked amount (+ reward portion if applicable) to all voters
                     distributeFundsToVoters(
                         id,
                         req,
-                        req.reward / (2 * req.minVotes)
+                        req.rewardAmount / (2 * req.minVotes)
                     );
                 } else {
-                    // if the requester wins the reward and the extra is returned to the requester
-                    // funds to reward dispute voters will come from the amount request voters have staked
-                    Address.sendValue(
-                        payable(req.requester),
-                        (req.reward * 11) / 10
+                    // If the disputer wins, 80% the reward is returned to the requester except 20% that is rewarded to the disputer for his service.
+                    // Funds to reward dispute voters will come from the amount the request voters have staked
+                    _transferOut(
+                        req.rewardAsset,
+                        req.requester,
+                        req.rewardAmount * 8 / 10
+                    );
+                    _transferOut(
+                        req.rewardAsset,
+                        dispute.creator,
+                        req.rewardAmount * 3 / 10 // what the disputer originally staked + 20% of the reward = 30% of the reward
                     );
                 }
-                // ditribute rewards to dispute voters
-                address[] memory disputeVotersMem = disputeVoters[id];
-                uint256 numDisputeVoters = disputeVotersMem.length;
-                for (uint256 j; j < numDisputeVoters; ++j) {
-                    Address.sendValue(
-                        payable(disputeVotersMem[j]),
-                        rewardToDisputeVoters / numDisputeVoters
-                    );
-                }
+                    // ditribute rewards to dispute voters
+                    address[] memory disputeVotersMem = disputeVoters[id];
+                    uint256 numDisputeVoters = disputeVotersMem.length;
+                    for (uint256 j; j < numDisputeVoters; ++j) {
+                        _transferOut(
+                            req.rewardAsset,
+                            disputeVotersMem[j],
+                            rewardToDisputeVoters / numDisputeVoters
+                        );
+                    }
+
             }
-            req.status = Status.CLOSED;
+            req.status = DataTypes.Status.CLOSED;
             requests[id] = req;
         }
     }
@@ -378,12 +435,12 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @notice returns the amount to stake in order to vote on proofs for the request
      * @param req - the request to calculate the amount for
      */
-    function stakeAmountForRequest(Request memory req)
+    function stakeAmountForRequest(DataTypes.Request memory req)
         internal
         pure
         returns (uint256)
     {
-        return req.reward / (10 * req.minVotes);
+        return req.rewardAmount / (10 * req.minVotes);
     }
 
     /**
@@ -394,7 +451,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      */
     function distributeFundsToVoters(
         uint256 reqId,
-        Request memory req,
+        DataTypes.Request memory req,
         uint256 extraAmount
     ) internal {
         address[] memory voters = votersByRequest[reqId];
@@ -404,7 +461,31 @@ contract VideOracle is Ownable, ReentrancyGuard {
             if (hasVotedForProofToRequest[reqId][req.electedProof][voters[j]]) {
                 amount += extraAmount;
             }
-            Address.sendValue(payable(voters[j]), amount);
+            _transferOut(req.rewardAsset, voters[j], amount);
+        }
+    }
+
+    function _transferIn(
+        IERC20 asset,
+        address from,
+        uint256 amount
+    ) internal {
+        if (address(asset) == address(0)) {
+            require(msg.value == amount, "Not enough staked");
+        } else {
+            asset.safeTransferFrom(from, address(this), amount);
+        }
+    }
+
+    function _transferOut(
+        IERC20 asset,
+        address to,
+        uint256 amount
+    ) internal {
+        if (address(asset) == address(0)) {
+            Address.sendValue(payable(to), amount);
+        } else {
+            asset.safeTransferFrom(address(this), to, amount);
         }
     }
 }
