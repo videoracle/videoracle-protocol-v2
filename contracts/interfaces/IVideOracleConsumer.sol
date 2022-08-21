@@ -7,7 +7,7 @@ import {DataTypes} from "../DataTypes.sol";
 interface IVideOracleConsumer {
     function isConsumer() external returns (bool);
 
-    function onRequestPendingValidation(
+    function onRequestFulfilled(
         uint256 requestId,
         DataTypes.Request calldata request
     ) external;

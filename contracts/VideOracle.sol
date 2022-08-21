@@ -226,7 +226,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             requests[requestId_] = req;
             emit RequestAnswered(requestId_);
         }
-        req.consumer.onRequestPendingValidation(requestId_, req);
+        req.consumer.onRequestFulfilled(requestId_, req);
     }
 
     /**
