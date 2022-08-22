@@ -256,7 +256,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @param reason_ - an explanation as to why the verification is rejected
      */
     function createDispute(uint256 requestId_, string calldata reason_)
-        public
+        external
         payable
     {
         DataTypes.Request storage req = requests[requestId_];
@@ -327,7 +327,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @param requestId_ - the id of the request the dispute belongs to
      * @param aye_ - wether you consider the dispute legit or not
      */
-    function voteOnDispute(uint256 requestId_, bool aye_) public {
+    function voteOnDispute(uint256 requestId_, bool aye_) external {
         DataTypes.Dispute memory dispute = disputes[requestId_];
         if (block.timestamp >= dispute.deadline) {
             // vote is ignored
@@ -373,7 +373,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * if the dispute ends without a clear winner: everyone gets their funds back (requester the reward, request voters & disputer their stake)
      */
     function distributeDisputeRewards(uint256[] calldata requestIds)
-        public
+        external
         nonReentrant
     {
         uint256 loops = requestIds.length;
