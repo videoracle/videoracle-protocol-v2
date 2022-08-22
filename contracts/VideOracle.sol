@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 import {IVideOracleConsumer} from "./interfaces/IVideOracleConsumer.sol";
 import {DataTypes} from "./DataTypes.sol";
@@ -20,16 +21,18 @@ import {DataTypes} from "./DataTypes.sol";
  * This puts the maximum timeframe before receiving a final answer of 14 days + the request's time to answer (creation until deadline).
  *
  * In order to make a Request, the requester must have enough VOT to burn according to the requestCharge.
+ * Upon creating a Request the requester set the reward for fulfilling said rquest by selecting a ERC20 and the amount to distribute.
  * in order to submit a Proof, the verifier must mint a videoNFT.
  * In order to vote for a Proof, the voter must stake an amount equal to 10% of the reward divided by the minNumberOfVotes of the request.
- * In order to create a Dispute, the disputer must stake an amount equal to 10% of the reward.
+ * In order to create a Dispute, the disputer must stake an amount equal to 10% of the request's reward.
  * Dispute voters are rewarded only if they actually resolve the dispute by receiving either the voters or disputer staked amounts.
- * The disputer receives 20% of the request reward as compensation for preventing the requester from receiving a worng answer. The requester is refunded the remaining 80%.
- *
+ * If the dispute resolves in favor of the disputer, they receive 20% of the request reward as compensation for preventing the requester from receiving a wrong answer. The requester is refunded the remaining 80%.
+ * If the dispute resolves in favor of the request voters, the elected verifier and the voter who elected their proof receive the request's reward.
  */
 contract VideOracle is Ownable, ReentrancyGuard {
     using Address for address;
     using Counters for Counters.Counter;
+    using EnumerableSet for EnumerableSet.AddressSet;
     using SafeERC20 for IERC20;
 
     event NewRequest(address indexed src, uint256 requestId);
@@ -41,11 +44,16 @@ contract VideOracle is Ownable, ReentrancyGuard {
     event VerificationRejected(uint256 requestId, string reason);
     event NewDisputeVote(address indexed src, uint256 requestId, bool aye);
 
+    // GENERAL CONF
+    // address of VideOracle Token
     IERC20 public immutable VOT;
+    // fee to create a request
     uint256 public requestCharge;
+    // which ERC20 can be used as reward
+    EnumerableSet.AddressSet internal _acceptedRewards;
 
-    Counters.Counter internal _requestIdCounter;
     // Requests
+    Counters.Counter internal _requestIdCounter;
     mapping(uint256 => DataTypes.Request) public requests;
     // only for AnswerType.STRING {0: "Alice", 1: "Bob", 2: "Carol", ...}
     mapping(uint256 => mapping(uint256 => string))
@@ -76,9 +84,20 @@ contract VideOracle is Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address vot, uint256 charge) {
+    constructor(address vot, uint256 charge, address[] memory accepted) {
         VOT = IERC20(vot);
         requestCharge = charge;
+        for (uint i; i < accepted.length; ++i) {
+            _acceptedRewards.add(accepted[i]);
+        }
+    }
+
+    /////////////////////
+    // EXTERNAL FUNCTIONS
+    /////////////////////
+
+    function acceptedRewards() external view returns (address[] memory) {
+        return _acceptedRewards.values();
     }
 
     /**
@@ -115,6 +134,8 @@ contract VideOracle is Ownable, ReentrancyGuard {
     ) external payable {
         // burn VOT
         VOT.safeTransferFrom(_msgSender(), address(0), requestCharge);
+        // check rewardAsset is whitelisted
+        require(_acceptedRewards.contains(address(requestData.rewardAsset)), "Unsupported reward");
         _transferIn(
             requestData.rewardAsset,
             _msgSender(),
@@ -203,7 +224,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         onlyOpenRequest(requestId_)
     {
         DataTypes.Request memory req = requests[requestId_];
-        _transferIn(req.rewardAsset, _msgSender(), stakeAmountForRequest(req));
+        _transferIn(req.rewardAsset, _msgSender(), _stakeAmountForRequest(req));
         require(
             !hasCastedVoteForRequest[requestId_][_msgSender()],
             "Vote already cast"
@@ -291,7 +312,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             );
             address verifier = proofsByRequest[id][req.electedProof].verifier;
             _transferOut(req.rewardAsset, verifier, req.rewardAmount / 2);
-            distributeFundsToVoters(
+            _distributeFundsToVoters(
                 id,
                 req,
                 req.rewardAmount / (2 * req.minVotes)
@@ -369,7 +390,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             }
             if (dispute.nay == dispute.aye) {
                 // return funds to request voters
-                distributeFundsToVoters(id, req, 0);
+                _distributeFundsToVoters(id, req, 0);
                 // return funds to disputer
                 _transferOut(
                     req.rewardAsset,
@@ -395,7 +416,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
                         req.rewardAmount / 2
                     );
                     // return staked amount (+ reward portion if applicable) to all voters
-                    distributeFundsToVoters(
+                    _distributeFundsToVoters(
                         id,
                         req,
                         req.rewardAmount / (2 * req.minVotes)
@@ -431,11 +452,15 @@ contract VideOracle is Ownable, ReentrancyGuard {
         }
     }
 
+    /////////////////////
+    // INTERNAL FUNCTIONS
+    /////////////////////
+
     /**
      * @notice returns the amount to stake in order to vote on proofs for the request
      * @param req - the request to calculate the amount for
      */
-    function stakeAmountForRequest(DataTypes.Request memory req)
+    function _stakeAmountForRequest(DataTypes.Request memory req)
         internal
         pure
         returns (uint256)
@@ -449,7 +474,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @param req - the request itself
      * @param extraAmount - the additional amount to send to voters of the electedProof
      */
-    function distributeFundsToVoters(
+    function _distributeFundsToVoters(
         uint256 reqId,
         DataTypes.Request memory req,
         uint256 extraAmount
@@ -457,7 +482,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         address[] memory voters = votersByRequest[reqId];
         uint256 numVoters = voters.length;
         for (uint256 j; j < numVoters; ++j) {
-            uint256 amount = stakeAmountForRequest(req);
+            uint256 amount = _stakeAmountForRequest(req);
             if (hasVotedForProofToRequest[reqId][req.electedProof][voters[j]]) {
                 amount += extraAmount;
             }
@@ -486,6 +511,22 @@ contract VideOracle is Ownable, ReentrancyGuard {
             Address.sendValue(payable(to), amount);
         } else {
             asset.safeTransferFrom(address(this), to, amount);
+        }
+    }
+
+    /////////////////////
+    // ADMIN FUNCTIONS
+    /////////////////////
+
+    function setRequestCharge(uint charge) external onlyOwner {
+        requestCharge = charge;
+    }
+
+    function toggleAcceptedAsset(address asset) external onlyOwner {
+        if (_acceptedRewards.contains(asset)) {
+            _acceptedRewards.remove(asset);
+        } else {
+            _acceptedRewards.add(asset);
         }
     }
 }
