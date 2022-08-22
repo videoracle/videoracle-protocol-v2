@@ -12,30 +12,69 @@ import {IVideOracleConsumer} from "./IVideOracleConsumer.sol";
 import {DataTypes} from "../DataTypes.sol";
 
 interface IVideOracle {
-    IERC20 public immutable VOT;
-    uint256 public requestCharge;
+    function VOT() external view returns (IERC20);
 
-    Counters.Counter internal _requestIdCounter;
-    // Requests
-    mapping(uint256 => DataTypes.Request) public requests;
-    // only for AnswerType.STRING {0: "Alice", 1: "Bob", 2: "Carol", ...}
-    mapping(uint256 => mapping(uint256 => string))
-        public acceptedAnswersByRequest;
-    // Proofs
-    mapping(uint256 => DataTypes.Proof[]) public proofsByRequest;
-    mapping(uint256 => address) public proofVerifier;
-    mapping(address => mapping(uint256 => bool)) public hasGivenProofToRequest;
-    // Votes
-    mapping(uint256 => mapping(uint256 => address[]))
-        public votersByProofByRequest;
-    mapping(uint256 => mapping(uint256 => mapping(address => bool)))
-        public hasVotedForProofToRequest;
-    mapping(uint256 => mapping(address => bool)) public hasCastedVoteForRequest;
-    mapping(uint256 => address[]) public votersByRequest;
-    // Disputes
-    mapping(uint256 => DataTypes.Dispute) public disputes;
-    mapping(uint256 => mapping(address => bool)) public hasVotedOnDispute;
-    mapping(uint256 => address[]) public disputeVoters;
+    function requestCharge() external view returns (uint256);
+
+    function acceptedRewards() external view returns (address[] memory);
+
+    function requests(uint256 id)
+        external
+        view
+        returns (DataTypes.Request memory);
+
+    function acceptedAnswersByRequest(uint256 reqId, uint256 answerId)
+        external
+        view
+        returns (string memory);
+
+    function proofsByRequest(uint256 reqId)
+        external
+        view
+        returns (DataTypes.Proof[] memory);
+
+    function proofVerifier(uint256 tokenId) external view returns (address);
+
+    function hasGivenProofToRequest(address account, uint256 reqId)
+        external
+        view
+        returns (bool);
+
+    function votersByProofByRequest(uint256 reqId, uint256 proofId)
+        external
+        view
+        returns (address[] memory);
+
+    function hasVotedForProofToRequest(
+        uint256 reqId,
+        uint256 proofId,
+        address account
+    ) external view returns (bool);
+
+    function hasCastedVoteForRequest(uint256 reqId, address account)
+        external
+        view
+        returns (bool);
+
+    function votersByRequest(uint256 reqId)
+        external
+        view
+        returns (address[] memory);
+
+    function disputes(uint256 reqId)
+        external
+        view
+        returns (DataTypes.Dispute memory);
+
+    function hasVotedOnDispute(uint256 reqId, address account)
+        external
+        view
+        returns (bool);
+
+    function disputeVoters(uint256 reqId)
+        external
+        view
+        returns (address[] memory);
 
     /**
      * @notice get the number of submitted requests

@@ -23,11 +23,15 @@ import {DataTypes} from "./DataTypes.sol";
  * In order to make a Request, the requester must have enough VOT to burn according to the requestCharge.
  * Upon creating a Request the requester set the reward for fulfilling said rquest by selecting a ERC20 and the amount to distribute.
  * in order to submit a Proof, the verifier must mint a videoNFT.
- * In order to vote for a Proof, the voter must stake an amount equal to 10% of the reward divided by the minNumberOfVotes of the request.
+ * In order to vote for a Proof, the voter must stake an amount equal to 30% of the reward divided by the minNumberOfVotes of the request.
  * In order to create a Dispute, the disputer must stake an amount equal to 10% of the request's reward.
  * Dispute voters are rewarded only if they actually resolve the dispute by receiving either the voters or disputer staked amounts.
- * If the dispute resolves in favor of the disputer, they receive 20% of the request reward as compensation for preventing the requester from receiving a wrong answer. The requester is refunded the remaining 80%.
+ *
+ * If the dispute resolves in favor of the disputer, they receive a sum equal 20% of the request reward as compensation.
+ * The requester is refunded 100% of the reward.
+ *
  * If the dispute resolves in favor of the request voters, the elected verifier and the voter who elected their proof receive the request's reward.
+ *
  */
 contract VideOracle is Ownable, ReentrancyGuard {
     using Address for address;
@@ -418,17 +422,18 @@ contract VideOracle is Ownable, ReentrancyGuard {
                         req.rewardAmount / (2 * req.minVotes)
                     );
                 } else {
-                    // If the disputer wins, 80% the reward is returned to the requester except 20% that is rewarded to the disputer for his service.
+                    // If the disputer wins, 100% the reward is returned to the requester.
                     // Funds to reward dispute voters will come from the amount the request voters have staked
                     _transferOut(
                         req.rewardAsset,
                         req.requester,
-                        req.rewardAmount * 8 / 10
+                        req.rewardAmount
                     );
+                    // The disputer receives theur stake back + 20% of the reward coming from the voters stake
                     _transferOut(
                         req.rewardAsset,
                         dispute.creator,
-                        req.rewardAmount * 3 / 10 // what the disputer originally staked + 20% of the reward = 30% of the reward
+                        req.rewardAmount * 3 / 10 // what the disputer originally staked + 20% of the reward (coming from voters stake) = 30% of the reward
                     );
                 }
                     // ditribute rewards to dispute voters
@@ -461,7 +466,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         pure
         returns (uint256)
     {
-        return req.rewardAmount / (10 * req.minVotes);
+        return req.rewardAmount * 3 / 10 / req.minVotes; // 30% / minVotes
     }
 
     /**
