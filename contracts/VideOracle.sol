@@ -330,11 +330,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
     function voteOnDispute(uint256 requestId_, bool aye_) external {
         DataTypes.Dispute memory dispute = disputes[requestId_];
         if (block.timestamp >= dispute.deadline) {
-            // vote is ignored
-            dispute.open = false;
-            disputes[requestId_] = dispute;
-            DataTypes.Request memory req = requests[requestId_];
-            req.consumer.onDisputeCLosed(requestId_, req, dispute);
+            _closeDispute(requestId_, dispute);
             return;
         }
         require(dispute.open, "Dispute closed");
@@ -385,8 +381,8 @@ contract VideOracle is Ownable, ReentrancyGuard {
                 "Request not disputed"
             );
             DataTypes.Dispute memory dispute = disputes[id];
-            if (block.timestamp >= dispute.deadline) {
-                voteOnDispute(id, false); // close the dispute, the vote is discarded anyways
+            if (dispute.open && block.timestamp >= dispute.deadline) {
+                _closeDispute(id, dispute);
             }
             if (dispute.nay == dispute.aye) {
                 // return funds to request voters
@@ -488,6 +484,13 @@ contract VideOracle is Ownable, ReentrancyGuard {
             }
             _transferOut(req.rewardAsset, voters[j], amount);
         }
+    }
+
+    function _closeDispute(uint requestId_, DataTypes.Dispute memory dispute) internal {
+        dispute.open = false;
+        disputes[requestId_] = dispute;
+        DataTypes.Request memory req = requests[requestId_];
+        req.consumer.onDisputeCLosed(requestId_, req, dispute);
     }
 
     function _transferIn(
