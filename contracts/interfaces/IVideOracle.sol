@@ -11,7 +11,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {DataTypes} from "../DataTypes.sol";
 
 interface IVideOracle {
-    function feeCollector() external view returns (IERC20);
+    function feeCollector() external view returns (address);
 
     function fee() external view returns (uint256);
 
@@ -80,16 +80,6 @@ interface IVideOracle {
      * @return uint
      */
     function totalRequests() external view returns (uint256);
-
-    /**
-     * @notice Get proofs for request `requestId_`
-     * @param requestId_ - the id of the request
-     * @return Proof[] - a list of proofs
-     */
-    function getProofsByRequest(uint256 requestId_)
-        external
-        view
-        returns (DataTypes.Proof[] memory);
 
     /**
      * @notice create a request.

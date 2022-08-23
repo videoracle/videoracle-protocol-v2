@@ -12,25 +12,12 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {DataTypes} from "./DataTypes.sol";
 
 /**
- * VideOracle
+ * @title VideOracle
  * A protocol for video verification of IRL events
- * The system acts like an optimistic oracle:
- * Requests are to be fulfilled within the specified deadline but a dipute window of 7 days after such date is given.
- * If a dispute is created, the time frame for its resolution is of 7 days.
- * This puts the maximum timeframe before receiving a final answer of 14 days + the request's time to answer (creation until deadline).
- *
- * In order to make a Request, the requester must have enough VOT to burn according to the requestCharge.
- * Upon creating a Request the requester set the reward for fulfilling said rquest by selecting a ERC20 and the amount to distribute.
- * in order to submit a Proof, the verifier must mint a videoNFT.
- * In order to vote for a Proof, the voter must stake an amount equal to 30% of the reward divided by the minNumberOfVotes of the request.
- * In order to create a Dispute, the disputer must stake an amount equal to 10% of the request's reward.
- * Dispute voters are rewarded only if they actually resolve the dispute by receiving either the voters or disputer staked amounts.
- *
- * If the dispute resolves in favor of the disputer, they receive a sum equal 20% of the request reward as compensation.
- * The requester is refunded 100% of the reward.
- *
- * If the dispute resolves in favor of the request voters, the elected verifier and the voter who elected their proof receive the request's reward.
- *
+ * The system acts like an optimistic oracle.
+ * Requests are to be fulfilled within the specified deadline but a dipute window of 3 days after such date is given.
+ * If a dispute is created, the time frame for its resolution is of 3 days.
+ * This puts the maximum timeframe before receiving a final answer of 14 days after the request's deadline.
  */
 contract VideOracle is Ownable, ReentrancyGuard {
     using Address for address;
@@ -249,7 +236,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         DataTypes.Request storage req = requests[reqId];
         require(block.timestamp >= req.deadline, "Request not expired");
         require(
-            block.timestamp <= req.deadline + 7 days,
+            block.timestamp <= req.deadline + 3 days,
             "Not longer disputable"
         );
         require(
@@ -267,7 +254,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         DataTypes.Dispute memory dispute = DataTypes.Dispute({
             reason: reason,
             open: true,
-            deadline: block.timestamp + 7 days,
+            deadline: block.timestamp + 3 days,
             aye: 0,
             nay: 0
         });
@@ -455,7 +442,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
                 continue;
             }
             DataTypes.Request memory req = requests[reqId];
-            if (block.timestamp < req.deadline + 7 days) {
+            if (block.timestamp < req.deadline + 3 days) {
                 // too early to claim - can still be disputed
                 continue;
             }
@@ -488,7 +475,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
                 // skip if not requester
                 continue;
             }
-            uint256 expiry = req.deadline + 7 days;
+            uint256 expiry = req.deadline + 3 days;
             if (req.status == DataTypes.Status.DISPUTED) {
                 expiry = disputes[reqId].deadline;
             }
