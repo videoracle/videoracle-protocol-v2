@@ -8,13 +8,12 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IVideOracleConsumer} from "./IVideOracleConsumer.sol";
 import {DataTypes} from "../DataTypes.sol";
 
 interface IVideOracle {
-    function VOT() external view returns (IERC20);
+    function feeCollector() external view returns (IERC20);
 
-    function requestCharge() external view returns (uint256);
+    function fee() external view returns (uint256);
 
     function acceptedRewards() external view returns (address[] memory);
 
@@ -80,7 +79,7 @@ interface IVideOracle {
      * @notice get the number of submitted requests
      * @return uint
      */
-    function numRequests() external view returns (uint256);
+    function totalRequests() external view returns (uint256);
 
     /**
      * @notice Get proofs for request `requestId_`
@@ -142,14 +141,6 @@ interface IVideOracle {
     function abortRequest(uint256 requestId_) external;
 
     /**
-     * @notice Distribute rewards for a list of requests.
-     * @dev can be "expensive" for the caller but allows to ditribute rewards for multiple requests more efficiently
-     * given this runs on a cheap network like Polygon hyperefficient functions are not a necessity
-     * @param requestIds - a list of requests to close
-     */
-    function closeFulfilledRequests(uint256[] calldata requestIds) external;
-
-    /**
      * @notice Cast vote on dispute for `requestId_`. It is `aye_` that you agree the dispute is legit.
      * @param requestId_ - the id of the request the dispute belongs to
      * @param aye_ - wether you consider the dispute legit or not
@@ -157,13 +148,17 @@ interface IVideOracle {
     function voteOnDispute(uint256 requestId_, bool aye_) external;
 
     /**
-     * @notice distribute rewards from disputes to whoever the receipients are
-     * @dev this function can become "expensive" due to the multitude of loops
-     * but considering the contract is on a cheap network like Polygon it should not be much of an issue
-     * @param requestIds - a list of requests for which to distribute funds
-     *
-     * Logic
-     * if the dispute ends without a clear winner: everyone gets their funds back (requester the reward, request voters & disputer their stake)
+     * @notice Claim funds as requester for list of requests
      */
-    function distributeDisputeRewards(uint256[] calldata requestIds) external;
+    function claimFundsAsRequester(uint256[] calldata requestIds) external;
+
+    /**
+     * @notice Claim funds as Verifier
+     */
+    function claimFundsAsVerifier(uint256[] calldata requestIds) external;
+
+    /**
+     * @notice Claim funds from requests as request voter
+     */
+    function claimFundsAsVoter(uint256[] calldata requestIds) external;
 }

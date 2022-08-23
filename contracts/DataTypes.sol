@@ -3,8 +3,6 @@ pragma solidity ^0.8.0;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {IVideOracleConsumer} from "./interfaces/IVideOracleConsumer.sol";
-
 library DataTypes {
     enum Status {
         OPEN,
@@ -29,8 +27,6 @@ library DataTypes {
         uint256 rewardAmount;
         uint256 deadline;
         uint256 minVotes;
-        // uint256 minSubmittedProofs; // TODO - good idea?
-        IVideOracleConsumer consumer;
     }
 
     struct Request {
@@ -46,16 +42,12 @@ library DataTypes {
         uint256 deadline;
         // minimum votes for a proof to be elected
         uint256 minVotes;
-        // require a minimum of video proofs to limit the possibility of a non genuine video being the only proof submitted
-        // uint256 minSubmittedProofs; // TODO - good idea?
         // request status
         Status status;
         // winning proof
         uint256 electedProof;
         // answers conf
         AnswerType answerType;
-        // oracle consumer
-        IVideOracleConsumer consumer;
     }
 
     struct Proof {
@@ -66,7 +58,6 @@ library DataTypes {
     }
 
     struct Dispute {
-        address creator;
         string reason;
         bool open;
         uint256 deadline; // ~7 days after opening dispute
