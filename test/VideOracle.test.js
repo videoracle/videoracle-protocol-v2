@@ -43,8 +43,8 @@ describe('VideOracle', function () {
         });
     });
 
-    describe('Create Request', function () {
-        describe('Validations', function () {
+    describe('Requests', function () {
+        describe('Create', function () {
             it('Should revert with the right error if reward is not supported', async function () {
                 const { videOracle } = await loadFixture(deployContract);
                 let error;
@@ -176,6 +176,15 @@ describe('VideOracle', function () {
                 expect(await videOracle.totalRequests()).to.be.equal(1);
             });
         });
+
+        describe('Read', async function () {
+            /** TODO
+             * .requests()
+             * .acceptedAnswersByRequest()
+             */
+        });
+
+        describe('Abort', async function () {});
     });
 
     describe('Proofs', function () {
@@ -261,7 +270,7 @@ describe('VideOracle', function () {
                             value: BigNumber.from(`${1e18 + 1e9}`),
                         }
                     );
-                    await videOracle.submitProof(0, 1, 3);
+                    await videOracle.submitProof(0, 1, 1);
                 } catch (e) {
                     // console.log(e);
                     error = `${e}`;
@@ -269,8 +278,50 @@ describe('VideOracle', function () {
                 expect(error).to.not.be.undefined;
                 expect(error.includes('Answer not valid')).to.be.true;
             });
+            it('Should revert with the right error if answer is not valid - string', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        2,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = ['foo', 'bar'];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.submitProof(0, 1, 1);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Cannot submit multiple proofs')).to.be
+                    .true;
+            });
+
+            /** TODO
+             * test good path for BINARY
+             * test good path for UINT
+             * test good path for STRING
+             * .proofsByRequest()
+             * .hasGivenProofToRequest()
+             */
         });
     });
+
+    describe('Votes', async function () {});
+    describe('Disputes', async function () {});
 
     // describe('Transfers', function () {
     //     it('Should transfer the funds to the owner', async function () {
