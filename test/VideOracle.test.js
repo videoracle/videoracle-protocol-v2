@@ -55,7 +55,7 @@ describe('VideOracle', function () {
                         'lat:xx,xxxx,long:-xx,xxx',
                         DAI_ADDRESS,
                         BigNumber.from(`${1e18}`),
-                        new Date().getDate() + 1000 * 3600 * 24 * 7, // 7 days from now
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
                         2,
                     ];
                     const acceptedAnswers = [];
@@ -72,9 +72,77 @@ describe('VideOracle', function () {
              * wrong amount of MATIC sent
              * tx does not carry fee
              * not enough balance of ERC20 to pull (remember to approve spending first)
+             * create requst with string answers but no accepted answers provided
              */
+            it('Should succeed with binary answers', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewRequest'
+                    );
+                    expect(event).to.not.be.undefined;
+                } catch (e) {
+                    console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.be.undefined;
+                expect(await videOracle.totalRequests()).to.be.equal(1);
+            });
 
-            it('Should go through with string answers', async function () {
+            it('Should succeed with integer answers', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        1,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewRequest'
+                    );
+                    expect(event).to.not.be.undefined;
+                } catch (e) {
+                    console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.be.undefined;
+                expect(await videOracle.totalRequests()).to.be.equal(1);
+            });
+
+            it('Should succeed with string answers', async function () {
                 const { videOracle } = await loadFixture(deployContract);
                 let error;
                 try {
@@ -84,7 +152,7 @@ describe('VideOracle', function () {
                         'lat:xx,xxxx,long:-xx,xxx',
                         ethers.constants.AddressZero,
                         BigNumber.from(`${1e18}`),
-                        new Date().getDate() + 1000 * 3600 * 24 * 7, // 7 days from now
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
                         2,
                     ];
                     const acceptedAnswers = ['foo', 'bar', 'baz'];
@@ -96,42 +164,126 @@ describe('VideOracle', function () {
                         }
                     );
                     const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewRequest'
+                    );
+                    expect(event).to.not.be.undefined;
                 } catch (e) {
                     console.log(e);
                     error = `${e}`;
                 }
                 expect(error).to.be.undefined;
                 expect(await videOracle.totalRequests()).to.be.equal(1);
-                // TODO - check event
             });
         });
-
-        // describe('Events', function () {
-        //     it('Should emit an event on withdrawals', async function () {
-        //         const { lock, unlockTime, lockedAmount } = await loadFixture(
-        //             deployOneYearLockFixture
-        //         );
-
-        //         await time.increaseTo(unlockTime);
-
-        //         await expect(lock.withdraw())
-        //             .to.emit(lock, 'Withdrawal')
-        //             .withArgs(lockedAmount, anyValue); // We accept any value as `when` arg
-        //     });
-        // });
-
-        // describe('Transfers', function () {
-        //     it('Should transfer the funds to the owner', async function () {
-        //         const { lock, unlockTime, lockedAmount, owner } =
-        //             await loadFixture(deployOneYearLockFixture);
-
-        //         await time.increaseTo(unlockTime);
-
-        //         await expect(lock.withdraw()).to.changeEtherBalances(
-        //             [owner, lock],
-        //             [lockedAmount, -lockedAmount]
-        //         );
-        //     });
-        // });
     });
+
+    describe('Proofs', function () {
+        describe('Validations', function () {
+            it('Should revert with the right error if request expired', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) - 1e5, // in the past
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    await videOracle.submitProof(0, 1, 1);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Request expired')).to.be.true;
+            });
+
+            it('Should revert with the right error if answer is not valid - binary', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    await videOracle.submitProof(0, 1, 2);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Answer not valid')).to.be.true;
+            });
+
+            it('Should revert with the right error if answer is not valid - string', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        2,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = ['foo', 'bar'];
+                    const tx = await videOracle.createRequest(
+                        req,
+                        acceptedAnswers,
+                        {
+                            value: BigNumber.from(`${1e18 + 1e9}`),
+                        }
+                    );
+                    await videOracle.submitProof(0, 1, 3);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Answer not valid')).to.be.true;
+            });
+        });
+    });
+
+    // describe('Transfers', function () {
+    //     it('Should transfer the funds to the owner', async function () {
+    //         const { lock, unlockTime, lockedAmount, owner } = await loadFixture(
+    //             deployOneYearLockFixture
+    //         );
+
+    //         await time.increaseTo(unlockTime);
+
+    //         await expect(lock.withdraw()).to.changeEtherBalances(
+    //             [owner, lock],
+    //             [lockedAmount, -lockedAmount]
+    //         );
+    //     });
+    // });
 });
