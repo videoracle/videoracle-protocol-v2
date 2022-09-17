@@ -17,7 +17,7 @@ import {DataTypes} from "./DataTypes.sol";
  * The system acts like an optimistic oracle.
  * Requests are to be fulfilled within the specified deadline but a dipute window of 3 days after such date is given.
  * If a dispute is created, the time frame for its resolution is of 3 days.
- * This puts the maximum timeframe before receiving a final answer of 14 days after the request's deadline.
+ * This puts the maximum timeframe before receiving a final answer of 6 days after the request's deadline.
  */
 contract VideOracle is Ownable, ReentrancyGuard {
     using Address for address;
@@ -98,7 +98,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
      * @return uint
      */
     function totalRequests() external view returns (uint256) {
-        return _requestIdCounter.current() - 1;
+        return _requestIdCounter.current();
     }
 
     /**
@@ -142,6 +142,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
             minVotes: requestData.minVotes
         });
         if (requestData.answerType == DataTypes.AnswerType.STRING) {
+            require(answers.length > 1, "Not enough answers provided");
             for (uint256 i; i < answers.length; ++i) {
                 acceptedAnswersByRequest[requestId][i] = answers[i];
             }
