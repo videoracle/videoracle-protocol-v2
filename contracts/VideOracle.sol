@@ -11,6 +11,8 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 
 import {DataTypes} from "./DataTypes.sol";
 
+import "hardhat/console.sol";
+
 /**
  * @title VideOracle
  * A protocol for video verification of IRL events
@@ -167,22 +169,23 @@ contract VideOracle is Ownable, ReentrancyGuard {
         require(block.timestamp < deadline, "Request expired");
         address verifier = _msgSender();
         require(
-            proofVerifier[tokenId] == address(0),
-            "Proof already submitted"
-        );
-        require(
             !hasGivenProofToRequest[reqId][verifier],
             "Cannot submit multiple proofs"
         );
         DataTypes.AnswerType answerType = requests[reqId].answerType;
         if (answerType == DataTypes.AnswerType.BINARY) {
             require(answer == 0 || answer == 1, "Answer not valid");
-        } else if (answerType == DataTypes.AnswerType.UINT) {
-            string memory emptyString;
+        } else if (answerType == DataTypes.AnswerType.STRING) {
+            // Although not 100% fool proof the possibility of having 2^256-1 accepted answers is negligible
             require(
                 keccak256(
                     abi.encode(acceptedAnswersByRequest[reqId][answer])
-                ) != keccak256(abi.encode(emptyString)),
+                ) !=
+                    keccak256(
+                        abi.encode(
+                            acceptedAnswersByRequest[reqId][type(uint256).max]
+                        )
+                    ),
                 "Answer not valid"
             );
         }
