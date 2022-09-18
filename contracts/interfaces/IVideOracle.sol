@@ -27,14 +27,14 @@ interface IVideOracle {
         view
         returns (string memory);
 
-    function proofsByRequest(uint256 reqId)
+    function proofsByRequest(uint256 reqId, uint256 proofId)
         external
         view
-        returns (DataTypes.Proof[] memory);
+        returns (DataTypes.Proof memory);
 
     function proofVerifier(uint256 tokenId) external view returns (address);
 
-    function hasGivenProofToRequest(address account, uint256 reqId)
+    function hasGivenProofToRequest(uint256 reqId, address account)
         external
         view
         returns (bool);

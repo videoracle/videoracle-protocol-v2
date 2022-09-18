@@ -188,7 +188,7 @@ describe('VideOracle', function () {
     });
 
     describe('Proofs', function () {
-        describe('Validations', function () {
+        describe('Submit', function () {
             it('Should revert with the right error if request expired', async function () {
                 const { videOracle } = await loadFixture(deployContract);
                 let error;
@@ -270,7 +270,7 @@ describe('VideOracle', function () {
                             value: BigNumber.from(`${1e18 + 1e9}`),
                         }
                     );
-                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.submitProof(0, 1, 2);
                 } catch (e) {
                     // console.log(e);
                     error = `${e}`;
@@ -278,7 +278,8 @@ describe('VideOracle', function () {
                 expect(error).to.not.be.undefined;
                 expect(error.includes('Answer not valid')).to.be.true;
             });
-            it('Should revert with the right error if answer is not valid - string', async function () {
+
+            it('Should revert with the right error if submitting multiple proofs', async function () {
                 const { videOracle } = await loadFixture(deployContract);
                 let error;
                 try {
@@ -310,17 +311,224 @@ describe('VideOracle', function () {
                     .true;
             });
 
-            /** TODO
-             * test good path for BINARY
-             * test good path for UINT
-             * test good path for STRING
-             * .proofsByRequest()
-             * .hasGivenProofToRequest()
-             */
+            it('Should succeed if correctly submitted - binary', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    const tx = await videOracle.submitProof(0, 1, 1);
+                    const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewProof'
+                    );
+                    expect(event).to.not.be.undefined;
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.be.undefined;
+            });
+
+            it('Should succeed if correctly submitted - int', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        1,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    const tx = await videOracle.submitProof(0, 1, 1);
+                    const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewProof'
+                    );
+                    expect(event).to.not.be.undefined;
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.be.undefined;
+            });
+            it('Should succeed if correctly submitted - string', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        2,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days from now
+                        2,
+                    ];
+                    const acceptedAnswers = ['foo', 'bar'];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    const tx = await videOracle.submitProof(0, 1, 1);
+                    const receipt = await tx.wait();
+                    const event = receipt.events.find(
+                        ({ event }) => event == 'NewProof'
+                    );
+                    expect(event).to.not.be.undefined;
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.be.undefined;
+                const proofData = await videOracle.proofsByRequest(0, 0);
+                expect(proofData).to.not.be.undefined;
+                const hasSubmittedProof =
+                    await videOracle.hasGivenProofToRequest(
+                        0,
+                        proofData.verifier
+                    );
+                expect(hasSubmittedProof).to.be.true;
+            });
         });
     });
 
-    describe('Votes', async function () {});
+    describe('Votes', async function () {
+        describe('Upvote', async function () {
+            it('Should revert with the right error if request is expired', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000),
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.upvoteProof(0, 0);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Request expired')).to.be.true;
+            });
+
+            it('Should revert with the right error if no amount is staked', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7,
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.upvoteProof(0, 0);
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Not enough staked')).to.be.true;
+            });
+
+            it('Should revert with the right error if one is upvoting their own proof', async function () {
+                const { videOracle } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7,
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.upvoteProof(0, 0, {
+                        value: BigNumber.from(`${1e18 / 20}`),
+                    });
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Cannot upvote own proof')).to.be.true;
+            });
+
+            it('Should revert with the right error if one is casting a second vote', async function () {
+                const { videOracle, addr1 } = await loadFixture(deployContract);
+                let error;
+                try {
+                    const req = [
+                        0,
+                        'body of request',
+                        'lat:xx,xxxx,long:-xx,xxx',
+                        ethers.constants.AddressZero,
+                        BigNumber.from(`${1e18}`),
+                        Math.floor(Date.now() / 1000) + 3600 * 24 * 7,
+                        2,
+                    ];
+                    const acceptedAnswers = [];
+                    await videOracle.createRequest(req, acceptedAnswers, {
+                        value: BigNumber.from(`${1e18 + 1e9}`),
+                    });
+                    await videOracle.submitProof(0, 1, 1);
+                    await videOracle.connect(addr1).upvoteProof(0, 0, {
+                        value: BigNumber.from(`${1e18 / 20}`),
+                    });
+                    await videOracle.connect(addr1).upvoteProof(0, 0, {
+                        value: BigNumber.from(`${1e18 / 20}`),
+                    });
+                } catch (e) {
+                    // console.log(e);
+                    error = `${e}`;
+                }
+                expect(error).to.not.be.undefined;
+                expect(error.includes('Vote already cast')).to.be.true;
+            });
+        });
+    });
+
     describe('Disputes', async function () {});
 
     // describe('Transfers', function () {
