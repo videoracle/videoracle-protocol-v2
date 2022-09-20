@@ -225,6 +225,20 @@ contract VideOracle is Ownable, ReentrancyGuard {
         votersByProofByRequest[reqId][proofId].push(_msgSender());
         hasVotedOnRequest[reqId][_msgSender()] = true;
         hasVotedForProofToRequest[reqId][proofId][_msgSender()] = true;
+
+        uint256 votersForProof = votersByProofByRequest[reqId][proofId].length;
+        if (votersForProof >= req.minVotes) {
+            if (req.electedProof == type(uint256).max) {
+                requests[reqId].electedProof = proofId;
+            } else {
+                if (
+                    votersForProof >
+                    votersByProofByRequest[reqId][req.electedProof].length
+                ) {
+                    requests[reqId].electedProof = proofId;
+                }
+            }
+        }
         emit NewProofVote(_msgSender(), reqId, proofId);
     }
 
@@ -241,12 +255,14 @@ contract VideOracle is Ownable, ReentrancyGuard {
         require(block.timestamp >= req.deadline, "Request not expired");
         require(
             block.timestamp <= req.deadline + 3 days,
-            "Not longer disputable"
+            "No longer disputable"
         );
         require(
             req.requester == _msgSender(),
             "Only requester can create dispute"
         );
+        // console.logUint(votersByRequest[reqId].length);
+        // console.logUint(votersByProofByRequest[reqId][req.electedProof].length);
         require(
             votersByRequest[reqId].length >
                 votersByProofByRequest[reqId][req.electedProof].length,
@@ -287,30 +303,20 @@ contract VideOracle is Ownable, ReentrancyGuard {
      */
     function voteOnDispute(uint256 reqId, bool aye) external {
         DataTypes.Dispute memory dispute = disputes[reqId];
-        if (block.timestamp >= dispute.deadline) {
+        if (dispute.open && block.timestamp >= dispute.deadline) {
             _closeDispute(reqId, dispute);
             return;
         }
         require(dispute.open, "Dispute closed");
         require(!hasVotedOnDispute[reqId][_msgSender()], "Cannot vote twice");
-        require(
-            requests[reqId].requester != _msgSender(),
-            "Cannot participate in dispute"
-        );
-        require(
-            hasVotedOnRequest[reqId][_msgSender()],
-            "Only Request voter can participate"
-        );
         uint256 proofId = requests[reqId].electedProof;
         require(
-            proofsByRequest[reqId][proofId].verifier != _msgSender(),
+            (requests[reqId].requester != _msgSender()) &&
+                (hasVotedOnRequest[reqId][_msgSender()]) &&
+                (proofsByRequest[reqId][proofId].verifier != _msgSender()) &&
+                (!hasVotedForProofToRequest[reqId][proofId][_msgSender()]),
             "Cannot participate in dispute"
         );
-        require(
-            !hasVotedForProofToRequest[reqId][proofId][_msgSender()],
-            "Cannot participate in dispute"
-        );
-
         aye ? dispute.aye++ : dispute.nay++;
         hasVotedOnDispute[reqId][_msgSender()] = true;
         disputeVoters[reqId].push(_msgSender());

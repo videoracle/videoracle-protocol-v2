@@ -14,7 +14,7 @@ module.exports = {
     networks: {
         hardhat: {
             // forking: {
-            //     url: process.env.RPC_URL,
+            //     url: 'https://polygon-rpc.com',
             // },
         },
         mumbai: {
