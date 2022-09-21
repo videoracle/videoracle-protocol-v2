@@ -265,8 +265,6 @@ contract VideOracle is Ownable, ReentrancyGuard {
             req.requester == _msgSender(),
             "Only requester can create dispute"
         );
-        // console.logUint(votersByRequest[reqId].length);
-        // console.logUint(votersByProofByRequest[reqId][req.electedProof].length);
         require(
             votersByRequest[reqId].length >
                 votersByProofByRequest[reqId][req.electedProof].length,
@@ -400,13 +398,11 @@ contract VideOracle is Ownable, ReentrancyGuard {
             uint256 reqId = requestIds[i];
             if (!hasGivenProofToRequest[reqId][_msgSender()]) {
                 // skip if not verifier
-                // console.logString("no proof");
                 continue;
             }
             DataTypes.Request memory req = requests[reqId];
             if (block.timestamp < req.deadline + 3 days) {
                 // too early to claim - can still be disputed
-                // console.logString("too early");
                 continue;
             }
             uint256 tokenId = proofsByRequest[reqId][req.electedProof].tokenId;
@@ -437,19 +433,14 @@ contract VideOracle is Ownable, ReentrancyGuard {
             DataTypes.Request memory req = requests[reqId];
             if (req.requester != _msgSender()) {
                 // skip if not requester
-                // console.logString("not requester");
                 continue;
             }
             uint256 expiry = req.deadline + 3 days;
-            console.logUint(uint256(req.status));
-            console.logUint(uint256(DataTypes.Status.DISPUTED));
             if (req.status == DataTypes.Status.DISPUTED) {
                 expiry = disputes[reqId].deadline;
             }
-            console.logUint(expiry);
             if (block.timestamp < expiry) {
                 // too early to claim
-                // console.logString("too early");
                 continue;
             }
             DataTypes.Dispute memory dispute = disputes[reqId];
