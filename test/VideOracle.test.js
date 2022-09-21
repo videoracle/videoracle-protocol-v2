@@ -413,11 +413,12 @@ describe('VideOracle', function () {
                     const balanceAfter = await owner.provider.getBalance(
                         videOracle.address
                     );
+                    console.log(balanceAfter);
                     // the reward is returned, the fee is kept
-                    expect(balanceAfter.eq(BigNumber.from(`${1e9}`))).to.be
+                    expect(balanceAfter.eq(BigNumber.from(`0`))).to.be
                         .true;
                 } catch (e) {
-                    // console.log(e);
+                    console.log(e);
                     error = `${e}`;
                 }
                 expect(error).to.be.undefined;
@@ -608,6 +609,7 @@ describe('VideOracle', function () {
                 }
                 expect(error).to.be.undefined;
             });
+
             it('Should succeed if correctly submitted - string', async function () {
                 const { videOracle } = await loadFixture(setup);
                 let error;
@@ -1356,5 +1358,177 @@ describe('VideOracle', function () {
         });
     });
 
-    describe('Claims', async function () {});
+    describe('Claims', async function () {
+        it('Should dispatch funds when calling claimAsVerifier()', async function () {
+            const { videOracle, addr1, addr2, addr3 } = await loadFixture(setup);
+            let error;
+            try {
+                const req = [
+                    0,
+                    'body of request',
+                    'lat:xx,xxxx,long:-xx,xxx',
+                    ethers.constants.AddressZero,
+                    BigNumber.from(`${1e18}`),
+                    Math.floor(Date.now() / 1000) + 3600,
+                    2,
+                ];
+                const acceptedAnswers = [];
+                await videOracle.createRequest(req, acceptedAnswers, {
+                    value: BigNumber.from(`${1e18 + 1e9}`),
+                });
+                await videOracle.connect(addr3).submitProof(0, 1, 1);
+                await videOracle.connect(addr1).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${1e18 / 20}`),
+                });
+
+                await videOracle.connect(addr2).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${1e18 / 20}`),
+                });
+                await addr1.provider.send('evm_increaseTime', [
+                    3 * 24 * 3600 + 3605,
+                ]);
+                await addr1.provider.send('evm_mine');
+
+                const tx = await videOracle
+                    .connect(addr3)
+                    .claimFundsAsVerifier([0]);
+                const receipt = await tx.wait();
+                const event = receipt.events.find(
+                    ({ event }) => event == 'Claim'
+                );
+                expect(event.args['amount'].eq(BigNumber.from(`${1e18 / 2}`)))
+                    .to.be.true;
+            } catch (e) {
+                console.log(e);
+                error = `${e}`;
+            }
+            expect(error).to.be.undefined;
+        })
+        
+        it('Should dispatch funds when calling claimAsVoter()', async function () {
+            const { videOracle, addr1, addr2, addr3 } = await loadFixture(
+                setup
+            );
+            let error;
+            try {
+                const balanceBefore = await addr1.provider.getBalance(
+                    addr3.address
+                );
+                console.log(balanceBefore);
+                const req = [
+                    0,
+                    'body of request',
+                    'lat:xx,xxxx,long:-xx,xxx',
+                    ethers.constants.AddressZero,
+                    BigNumber.from(`${5 * 1e18}`),
+                    Math.floor(Date.now() / 1000) + 3600,
+                    2,
+                ];
+                const acceptedAnswers = [];
+                await videOracle.createRequest(req, acceptedAnswers, {
+                    value: BigNumber.from(`${5 * 1e18 + 1e9}`),
+                });
+                await videOracle.connect(addr3).submitProof(0, 1, 1);
+                await videOracle.connect(addr1).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${(5 * 1e18) / 20}`),
+                });
+
+                await videOracle.connect(addr2).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${(5 * 1e18) / 20}`),
+                });
+                await addr1.provider.send('evm_increaseTime', [
+                    3 * 24 * 3600 + 3605,
+                ]);
+                await addr1.provider.send('evm_mine');
+
+                const tx = await videOracle
+                    .connect(addr1)
+                    .claimFundsAsVoter([0]);
+                const receipt = await tx.wait();
+                // console.log(receipt.events);
+                const events = receipt.events.filter(
+                    ({ event }) => event == 'Claim'
+                );
+                expect(events.length > 0).to.be.true;
+                expect(
+                    events[0].args['amount'].eq(
+                        BigNumber.from(`${(5 * 1e18) / 4}`).add(
+                            BigNumber.from(`${(5 * 1e18) / 20}`)
+                        )
+                    )
+                ).to.be.true;
+            } catch (e) {
+                console.log(e);
+                error = `${e}`;
+            }
+            expect(error).to.be.undefined;
+        });
+
+        it('Should dispatch funds when calling claimAsRequester()', async function () {
+            const { videOracle, addr1, addr2, addr3, addr4, addr5 } =
+                await loadFixture(setup);
+            let error;
+            try {
+                const req = [
+                    0,
+                    'body of request',
+                    'lat:xx,xxxx,long:-xx,xxx',
+                    ethers.constants.AddressZero,
+                    BigNumber.from(`${1e18}`),
+                    Math.floor(Date.now() / 1000) + 3600,
+                    2,
+                ];
+                const acceptedAnswers = [];
+                await videOracle.createRequest(req, acceptedAnswers, {
+                    value: BigNumber.from(`${1e18 + 1e9}`),
+                });
+                await videOracle.submitProof(0, 1, 1);
+                await videOracle.connect(addr4).submitProof(0, 2, 0);
+
+                await videOracle.connect(addr1).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${1e18 / 20}`),
+                });
+
+                await videOracle.connect(addr2).upvoteProof(0, 0, {
+                    value: BigNumber.from(`${1e18 / 20}`),
+                });
+
+                await videOracle.connect(addr3).upvoteProof(0, 1, {
+                    value: BigNumber.from(`${1e18 / 20}`),
+                });
+
+                await addr1.provider.send('evm_increaseTime', [3605]);
+                await addr1.provider.send('evm_mine');
+
+                await videOracle.createDispute(0, 'foobarbaz', {
+                    value: BigNumber.from(`${1e17}`),
+                });
+                await videOracle.connect(addr3).voteOnDispute(0, true);
+
+                await addr1.provider.send('evm_increaseTime', [
+                    3 * 24 * 3600 + 5,
+                ]);
+                await addr1.provider.send('evm_mine');
+
+                const tx = await videOracle.claimFundsAsRequester([0]);
+
+                const receipt = await tx.wait();
+                const events = receipt.events.filter(
+                    ({ event }) => event == 'Claim'
+                );
+                expect(events.length > 0).to.be.true;
+                // console.log(events)
+                expect(
+                    events[0].args['amount'].eq(
+                        BigNumber.from(`${1e18 + 1e17}`)
+                    )
+                ).to.be.true;
+            } catch (e) {
+                console.log(e);
+                error = `${e}`;
+            }
+            expect(error).to.be.undefined;
+        });
+
+    });
 });

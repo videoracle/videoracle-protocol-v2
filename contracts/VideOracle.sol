@@ -35,6 +35,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
     event VerificationAccepted(uint256 requestId);
     event VerificationRejected(uint256 requestId, string reason);
     event NewDisputeVote(address indexed src, uint256 requestId, bool aye);
+    event Claim(uint256 reqId, uint256 amount);
 
     // GENERAL CONF
     address public feeCollector;
@@ -130,6 +131,8 @@ contract VideOracle is Ownable, ReentrancyGuard {
                 requestData.rewardAmount
             );
         }
+        Address.sendValue(payable(feeCollector), fee);
+
         uint256 requestId = _requestIdCounter.current();
         requests[requestId] = DataTypes.Request({
             requester: _msgSender(),
@@ -228,6 +231,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
 
         uint256 votersForProof = votersByProofByRequest[reqId][proofId].length;
         if (votersForProof >= req.minVotes) {
+            requests[reqId].status = DataTypes.Status.FULFILLED;
             if (req.electedProof == type(uint256).max) {
                 requests[reqId].electedProof = proofId;
             } else {
@@ -251,7 +255,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         external
         payable
     {
-        DataTypes.Request storage req = requests[reqId];
+        DataTypes.Request memory req = requests[reqId];
         require(block.timestamp >= req.deadline, "Request not expired");
         require(
             block.timestamp <= req.deadline + 3 days,
@@ -270,7 +274,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
         );
         // stake
         _transferIn(req.rewardAsset, _msgSender(), req.rewardAmount / 10);
-        req.status = DataTypes.Status.DISPUTED;
+        requests[reqId].status = DataTypes.Status.DISPUTED;
         DataTypes.Dispute memory dispute = DataTypes.Dispute({
             reason: reason,
             open: true,
@@ -322,60 +326,6 @@ contract VideOracle is Ownable, ReentrancyGuard {
         disputeVoters[reqId].push(_msgSender());
         emit NewDisputeVote(_msgSender(), reqId, aye);
         disputes[reqId] = dispute;
-    }
-
-    /////////////////////
-    // INTERNAL FUNCTIONS
-    /////////////////////
-
-    /**
-     * @notice returns the amount to stake in order to vote for the proof with id `proofId` for the request `requestId`
-     * @param req - the request to calculate the amount for
-     */
-    function _stakeAmountForRequest(
-        uint256 requestId,
-        DataTypes.Request memory req,
-        uint256 proofId
-    ) internal view returns (uint256) {
-        uint256 currentVotesForProof = votersByProofByRequest[requestId][
-            proofId
-        ].length;
-
-        uint256 denominator = currentVotesForProof < req.minVotes
-            ? req.minVotes
-            : currentVotesForProof + 1;
-        return req.rewardAmount / (10 * denominator); // 10% / votes
-    }
-
-    function _closeDispute(uint256 reqId, DataTypes.Dispute memory dispute)
-        internal
-    {
-        dispute.open = false;
-        disputes[reqId] = dispute;
-    }
-
-    function _transferIn(
-        IERC20 asset,
-        address from,
-        uint256 amount
-    ) internal {
-        if (address(asset) == address(0)) {
-            require(msg.value == amount, "Not enough staked");
-        } else {
-            asset.safeTransferFrom(from, address(this), amount);
-        }
-    }
-
-    function _transferOut(
-        IERC20 asset,
-        address to,
-        uint256 amount
-    ) internal {
-        if (address(asset) == address(0)) {
-            Address.sendValue(payable(to), amount);
-        } else {
-            asset.safeTransferFrom(address(this), to, amount);
-        }
     }
 
     /**
@@ -433,6 +383,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
                 }
             }
             _transferOut(req.rewardAsset, _msgSender(), amountToTransfer);
+            emit Claim(reqId, amountToTransfer);
         }
     }
 
@@ -449,11 +400,13 @@ contract VideOracle is Ownable, ReentrancyGuard {
             uint256 reqId = requestIds[i];
             if (!hasGivenProofToRequest[reqId][_msgSender()]) {
                 // skip if not verifier
+                // console.logString("no proof");
                 continue;
             }
             DataTypes.Request memory req = requests[reqId];
             if (block.timestamp < req.deadline + 3 days) {
                 // too early to claim - can still be disputed
+                // console.logString("too early");
                 continue;
             }
             uint256 tokenId = proofsByRequest[reqId][req.electedProof].tokenId;
@@ -464,6 +417,7 @@ contract VideOracle is Ownable, ReentrancyGuard {
                         _msgSender(),
                         req.rewardAmount / 2
                     );
+                    emit Claim(reqId, req.rewardAmount / 2);
                 }
             }
         }
@@ -483,14 +437,19 @@ contract VideOracle is Ownable, ReentrancyGuard {
             DataTypes.Request memory req = requests[reqId];
             if (req.requester != _msgSender()) {
                 // skip if not requester
+                // console.logString("not requester");
                 continue;
             }
             uint256 expiry = req.deadline + 3 days;
+            console.logUint(uint256(req.status));
+            console.logUint(uint256(DataTypes.Status.DISPUTED));
             if (req.status == DataTypes.Status.DISPUTED) {
                 expiry = disputes[reqId].deadline;
             }
+            console.logUint(expiry);
             if (block.timestamp < expiry) {
                 // too early to claim
+                // console.logString("too early");
                 continue;
             }
             DataTypes.Dispute memory dispute = disputes[reqId];
@@ -500,7 +459,62 @@ contract VideOracle is Ownable, ReentrancyGuard {
                     _msgSender(),
                     (req.rewardAmount * 11) / 10
                 );
+                emit Claim(reqId, (req.rewardAmount * 11) / 10);
             }
+        }
+    }
+
+    /////////////////////
+    // INTERNAL FUNCTIONS
+    /////////////////////
+
+    /**
+     * @notice returns the amount to stake in order to vote for the proof with id `proofId` for the request `requestId`
+     * @param req - the request to calculate the amount for
+     */
+    function _stakeAmountForRequest(
+        uint256 requestId,
+        DataTypes.Request memory req,
+        uint256 proofId
+    ) internal view returns (uint256) {
+        uint256 currentVotesForProof = votersByProofByRequest[requestId][
+            proofId
+        ].length;
+
+        uint256 denominator = currentVotesForProof < req.minVotes
+            ? req.minVotes
+            : currentVotesForProof + 1;
+        return req.rewardAmount / (10 * denominator); // 10% / votes
+    }
+
+    function _closeDispute(uint256 reqId, DataTypes.Dispute memory dispute)
+        internal
+    {
+        dispute.open = false;
+        disputes[reqId] = dispute;
+    }
+
+    function _transferIn(
+        IERC20 asset,
+        address from,
+        uint256 amount
+    ) internal {
+        if (address(asset) == address(0)) {
+            require(msg.value == amount, "Not enough staked");
+        } else {
+            asset.safeTransferFrom(from, address(this), amount);
+        }
+    }
+
+    function _transferOut(
+        IERC20 asset,
+        address to,
+        uint256 amount
+    ) internal {
+        if (address(asset) == address(0)) {
+            Address.sendValue(payable(to), amount);
+        } else {
+            asset.safeTransferFrom(address(this), to, amount);
         }
     }
 
