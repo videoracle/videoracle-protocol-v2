@@ -7,4 +7,4 @@ Brands may want to verify that the shops execute in-store marketing as per requi
 
 VideOracle sets out to solve these issues through a decentralized and trustless verification protocol. The protocol's architecture is detailed below.
 
-To learn more about VideOracle, check out our [Research Paper](https://docs.google.com/document/d/1UFDZChAk7ZqmAbSsuNt1FCZR3bkZ_ika/edit?usp=sharing&ouid=101104196935052092535&rtpof=true&sd=true).
+To learn more about VideOracle, check out our [whitepaper](https://github.com/videoracle/wiki/blob/main/WHITEPAPER.md).
